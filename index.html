@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Inchiostro UV — steganografia testuale</title>
+<meta name="theme-color" content="#16131c">
+<meta name="description" content="Nascondi messaggi dentro testo normale con caratteri a larghezza zero e cifratura AES-256-GCM.">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="icons/apple-touch.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<style>
+  :root{
+    --bg:#16131c; --surface:#1f1b29; --surface-2:#26212f;
+    --line:#352e47; --ink:#ece8f4; --muted:#9088a0; --faint:#5f566e;
+    --uv:#a368ff; --uv-soft:#7c4fd6; --glow:rgba(163,104,255,.35);
+    --ok:#6ee7a8; --warn:#f0b85e; --err:#ff7a8a;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:
+      radial-gradient(900px 500px at 80% -10%, rgba(163,104,255,.10), transparent 60%),
+      var(--bg);
+    color:var(--ink);font-family:var(--sans);line-height:1.5;
+    padding:max(16px,env(safe-area-inset-top)) clamp(16px,4vw,40px) 40px;}
+  .wrap{max-width:860px;margin:0 auto}
+  .topbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.32em;
+    text-transform:uppercase;color:var(--uv);opacity:.85}
+  #installBtn{display:none}
+  h1{font-size:clamp(26px,5vw,38px);margin:.1em 0 .15em;font-weight:650;letter-spacing:-.02em}
+  h1 .uv{color:var(--uv);text-shadow:0 0 18px var(--glow)}
+  .lede{color:var(--muted);max-width:60ch;font-size:14.5px}
+  .panel{position:relative;overflow:hidden;background:var(--surface);border:1px solid var(--line);
+    border-radius:14px;padding:20px;margin-top:18px}
+  .panel h2{font-size:13px;font-family:var(--mono);letter-spacing:.16em;
+    text-transform:uppercase;color:var(--muted);margin:0 0 16px;font-weight:600;
+    display:flex;align-items:center;gap:10px}
+  .panel h2::before{content:"";width:7px;height:7px;border-radius:50%;
+    background:var(--uv);box-shadow:0 0 10px var(--glow)}
+  label{display:block;font-size:12px;color:var(--muted);margin:0 0 6px;
+    font-family:var(--mono);letter-spacing:.04em}
+  textarea,input[type=text],input[type=password]{width:100%;background:var(--bg);
+    border:1px solid var(--line);border-radius:9px;color:var(--ink);
+    padding:11px 13px;font-family:var(--mono);font-size:13px;resize:vertical}
+  textarea{min-height:84px}
+  textarea:focus,input:focus{outline:none;border-color:var(--uv-soft);
+    box-shadow:0 0 0 3px rgba(163,104,255,.18)}
+  .row{margin-bottom:14px}
+  .grid{display:grid;gap:14px}
+  .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:4px}
+  button{font-family:var(--sans);font-size:13.5px;font-weight:550;cursor:pointer;
+    border-radius:9px;padding:10px 16px;border:1px solid var(--line);
+    background:var(--surface-2);color:var(--ink);transition:.15s}
+  button:hover{border-color:var(--uv-soft)}
+  button.primary{background:linear-gradient(180deg,var(--uv),var(--uv-soft));
+    border-color:transparent;color:#120e1c;font-weight:650;
+    box-shadow:0 6px 22px -8px var(--glow)}
+  button.primary:hover{filter:brightness(1.06)}
+  button:focus-visible{outline:2px solid var(--uv);outline-offset:2px}
+  .out{position:relative;background:var(--bg);border:1px dashed var(--line);border-radius:9px;
+    padding:12px 13px;font-family:var(--mono);font-size:13px;min-height:44px;
+    white-space:pre-wrap;word-break:break-word;color:var(--ink)}
+  .out:empty::before{content:"— in attesa —";color:var(--faint)}
+  .out .uvmark{color:var(--uv);opacity:0;transition:.2s;font-weight:700}
+  .out.reveal .uvmark{opacity:1;text-shadow:0 0 8px var(--glow)}
+  /* signature: blacklight sweep on reveal */
+  .out.sweep::after{content:"";position:absolute;inset:0;pointer-events:none;
+    background:linear-gradient(105deg,transparent 35%,var(--glow) 50%,transparent 65%);
+    transform:translateX(-120%);animation:sweep .9s ease-out 1}
+  @keyframes sweep{to{transform:translateX(120%)}}
+  .meta{display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;font-family:var(--mono);
+    font-size:11.5px;color:var(--faint)}
+  .meta b{color:var(--muted);font-weight:500}
+  .status{font-family:var(--mono);font-size:12.5px;margin-top:10px;min-height:18px}
+  .status.ok{color:var(--ok)} .status.warn{color:var(--warn)} .status.err{color:var(--err)}
+  .toggle{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);
+    font-size:12px;color:var(--muted);cursor:pointer;user-select:none}
+  .toggle input{accent-color:var(--uv);width:15px;height:15px}
+  .note{font-size:12.5px;color:var(--muted);background:var(--surface-2);
+    border-left:2px solid var(--uv-soft);border-radius:0 8px 8px 0;
+    padding:12px 14px;margin-top:18px;line-height:1.55}
+  .note code{color:var(--uv);font-family:var(--mono)}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}.out.sweep::after{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="eyebrow">Steganografia testuale · Web Crypto</div>
+    <button id="installBtn">Installa app</button>
+  </div>
+  <header>
+    <h1>Inchiostro <span class="uv">UV</span></h1>
+    <p class="lede">Annega un messaggio dentro un testo perfettamente normale usando
+    caratteri Unicode a larghezza zero, invisibili a chi legge. Opzionalmente lo cifri
+    con AES-256-GCM, così il payload non è solo nascosto ma anche illeggibile senza chiave.</p>
+  </header>
+
+  <section class="panel">
+    <h2>Nascondi</h2>
+    <div class="grid">
+      <div class="row">
+        <label for="cover">Testo di copertura (quello che il lettore umano vede)</label>
+        <textarea id="cover">Buongiorno, in allegato l'offerta aggiornata per i ricambi richiesti. Resto a disposizione per qualsiasi chiarimento.</textarea>
+      </div>
+      <div class="row">
+        <label for="secret">Messaggio segreto da occultare</label>
+        <textarea id="secret">DOC-REF:7741 | agente:Marco R. | sconto-max:12%</textarea>
+      </div>
+      <div class="row">
+        <label for="passEmbed">Passphrase di cifratura — opzionale (vuoto = solo occultamento)</label>
+        <input id="passEmbed" type="password" placeholder="es. chiave condivisa col destinatario">
+      </div>
+    </div>
+    <div class="controls">
+      <button class="primary" id="btnEmbed">Genera testo</button>
+      <button id="btnCopy">Copia</button>
+      <button id="btnShare">Condividi</button>
+      <label class="toggle"><input type="checkbox" id="revealEmbed"> rivela i caratteri nascosti</label>
+    </div>
+    <div class="row" style="margin-top:16px">
+      <label>Output — incollalo in una mail, chat o campo PWA</label>
+      <div class="out" id="embedOut"></div>
+    </div>
+    <div class="meta" id="embedMeta"></div>
+    <div class="status" id="embedStatus"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Rivela</h2>
+    <div class="grid">
+      <div class="row">
+        <label for="carrier">Incolla qui il testo sospetto</label>
+        <textarea id="carrier"></textarea>
+      </div>
+      <div class="row">
+        <label for="passExtract">Passphrase — se il payload era cifrato</label>
+        <input id="passExtract" type="password" placeholder="lascia vuoto se non cifrato">
+      </div>
+    </div>
+    <div class="controls">
+      <button class="primary" id="btnExtract">Estrai</button>
+      <button id="btnScan">Solo analizza (pentest)</button>
+    </div>
+    <div class="row" style="margin-top:16px">
+      <label>Messaggio recuperato</label>
+      <div class="out" id="extractOut"></div>
+    </div>
+    <div class="status" id="extractStatus"></div>
+  </section>
+
+  <div class="note">
+    <b>Per il tuo lavoro:</b> i caratteri usati sono <code>U+200B</code> e <code>U+200C</code>.
+    Sopravvivono al copia-incolla di testo semplice ma vengono spesso rimossi da sanitizzatori
+    HTML, normalizzazione Unicode (NFKC) e molti DLP/WAF. In ottica <b>pentest</b>, “Solo analizza”
+    conta i caratteri invisibili presenti: è il segnale che un rilevatore cerca. La steganografia
+    <b>nasconde</b>, non protegge: per riservatezza reale abbina sempre la cifratura.
+  </div>
+</div>
+
+<script>
+const BIT0='\u200B', BIT1='\u200C';
+const ZW_RE=/[\u200B\u200C]/g;
+const enc=new TextEncoder(), dec=new TextDecoder();
+const $=id=>document.getElementById(id);
+
+const bytesToBits=b=>{const o=[];for(const x of b)for(let i=7;i>=0;i--)o.push((x>>i)&1);return o;};
+const bitsToBytes=bits=>{const o=[];for(let i=0;i+8<=bits.length;i+=8){let v=0;for(let j=0;j<8;j++)v=(v<<1)|bits[i+j];o.push(v);}return Uint8Array.from(o);};
+const bitsToZW=bits=>bits.map(b=>b?BIT1:BIT0).join('');
+const zwToBits=s=>{const o=[];for(const c of s){if(c===BIT0)o.push(0);else if(c===BIT1)o.push(1);}return o;};
+
+function frame(flag,body){
+  const p=new Uint8Array(1+body.length);p[0]=flag;p.set(body,1);
+  const len=p.length;
+  const h=Uint8Array.from([(len>>>24)&255,(len>>>16)&255,(len>>>8)&255,len&255]);
+  const a=new Uint8Array(4+p.length);a.set(h,0);a.set(p,4);return a;
+}
+function deframe(a){
+  if(a.length<4)return null;
+  const len=(a[0]<<24)|(a[1]<<16)|(a[2]<<8)|a[3];
+  if(len<1||4+len>a.length)return null;
+  const p=a.slice(4,4+len);return{flag:p[0],body:p.slice(1)};
+}
+async function deriveKey(pass,salt){
+  const km=await crypto.subtle.importKey('raw',enc.encode(pass),'PBKDF2',false,['deriveKey']);
+  return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:150000,hash:'SHA-256'},km,
+    {name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+}
+async function encryptBody(plain,pass){
+  const salt=crypto.getRandomValues(new Uint8Array(16));
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const k=await deriveKey(pass,salt);
+  const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},k,plain));
+  const b=new Uint8Array(28+ct.length);b.set(salt,0);b.set(iv,16);b.set(ct,28);return b;
+}
+async function decryptBody(b,pass){
+  const salt=b.slice(0,16),iv=b.slice(16,28),ct=b.slice(28);
+  const k=await deriveKey(pass,salt);
+  return new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv},k,ct));
+}
+async function embed(cover,secret,pass){
+  const clean=cover.replace(ZW_RE,'');
+  let flag=0, body=enc.encode(secret);
+  if(pass){flag=1;body=await encryptBody(enc.encode(secret),pass);}
+  const zw=bitsToZW(bytesToBits(frame(flag,body)));
+  const idx=clean.indexOf(' ');
+  return idx>=0 ? clean.slice(0,idx+1)+zw+clean.slice(idx+1) : clean+zw;
+}
+async function extract(carrier,pass){
+  const bits=zwToBits(carrier);
+  if(bits.length<32) throw new Error('nessun payload nascosto trovato');
+  const f=deframe(bitsToBytes(bits));
+  if(!f) throw new Error('payload assente o corrotto');
+  if(f.flag===1){
+    if(!pass) throw new Error('payload cifrato: serve la passphrase');
+    return dec.decode(await decryptBody(f.body,pass));
+  }
+  return dec.decode(f.body);
+}
+
+function renderReveal(el,text,on){
+  el.classList.toggle('reveal',on);
+  if(!on){el.textContent=text;return;}
+  el.innerHTML='';
+  for(const ch of text){
+    if(ch===BIT0||ch===BIT1){
+      const s=document.createElement('span');s.className='uvmark';s.textContent='·';el.appendChild(s);
+    } else el.appendChild(document.createTextNode(ch));
+  }
+  el.classList.remove('sweep'); void el.offsetWidth; el.classList.add('sweep');
+}
+
+let lastCarrier='';
+const setStatus=(el,msg,kind)=>{el.textContent=msg;el.className='status '+(kind||'');};
+
+$('btnEmbed').onclick=async()=>{
+  const st=$('embedStatus');
+  try{
+    const cover=$('cover').value, secret=$('secret').value, pass=$('passEmbed').value;
+    if(!secret){setStatus(st,'inserisci un messaggio segreto','warn');return;}
+    lastCarrier=await embed(cover,secret,pass);
+    renderReveal($('embedOut'),lastCarrier,$('revealEmbed').checked);
+    const hidden=(lastCarrier.match(ZW_RE)||[]).length;
+    $('embedMeta').innerHTML=
+      `<span><b>visibili</b> ${[...lastCarrier.replace(ZW_RE,'')].length} car.</span>`+
+      `<span><b>nascosti</b> ${hidden} car.</span>`+
+      `<span><b>modo</b> ${pass?'AES-256-GCM':'solo occultamento'}</span>`;
+    setStatus(st,pass?'fatto · payload cifrato e occultato':'fatto · payload occultato (non cifrato)',pass?'ok':'warn');
+  }catch(e){setStatus(st,'errore: '+e.message,'err');}
+};
+$('revealEmbed').onchange=e=>renderReveal($('embedOut'),lastCarrier,e.target.checked);
+
+$('btnCopy').onclick=async()=>{
+  if(!lastCarrier){setStatus($('embedStatus'),'niente da copiare','warn');return;}
+  try{await navigator.clipboard.writeText(lastCarrier);setStatus($('embedStatus'),'copiato negli appunti','ok');}
+  catch{setStatus($('embedStatus'),'copia non riuscita (permessi)','err');}
+};
+$('btnShare').onclick=async()=>{
+  if(!lastCarrier){setStatus($('embedStatus'),'genera prima il testo','warn');return;}
+  if(navigator.share){
+    try{await navigator.share({text:lastCarrier});setStatus($('embedStatus'),'condiviso','ok');}
+    catch{/* annullato */}
+  } else {
+    try{await navigator.clipboard.writeText(lastCarrier);setStatus($('embedStatus'),'condivisione non supportata · copiato negli appunti','warn');}
+    catch{setStatus($('embedStatus'),'condivisione non supportata','err');}
+  }
+};
+
+$('btnExtract').onclick=async()=>{
+  const st=$('extractStatus');
+  try{
+    const msg=await extract($('carrier').value,$('passExtract').value);
+    $('extractOut').textContent=msg;
+    setStatus(st,'messaggio recuperato · integrità verificata','ok');
+  }catch(e){
+    $('extractOut').textContent='';
+    const k=/passphrase|cifrato/.test(e.message)?'warn':'err';
+    setStatus(st, (e.name==='OperationError')
+      ?'passphrase errata o dati manomessi (GCM)':'errore: '+e.message, k);
+  }
+};
+$('btnScan').onclick=()=>{
+  const t=$('carrier').value;
+  const hidden=(t.match(ZW_RE)||[]).length;
+  const st=$('extractStatus');
+  if(hidden===0){setStatus(st,'nessun carattere invisibile rilevato','');return;}
+  setStatus(st,`sospetto: ${hidden} caratteri a larghezza zero (~${Math.max(0,Math.floor(hidden/8)-4)} byte di payload)`,'warn');
+};
+
+// ---- PWA: install prompt + service worker ----
+let deferredPrompt=null;
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;$('installBtn').style.display='inline-block';});
+$('installBtn').onclick=async()=>{
+  if(!deferredPrompt)return;
+  deferredPrompt.prompt();await deferredPrompt.userChoice;
+  deferredPrompt=null;$('installBtn').style.display='none';
+};
+window.addEventListener('appinstalled',()=>{$('installBtn').style.display='none';});
+if('serviceWorker' in navigator && location.protocol.startsWith('http')){
+  window.addEventListener('load',()=>navigator.serviceWorker.register('service-worker.js').catch(()=>{}));
+}
+</script>
+</body>
+</html>
