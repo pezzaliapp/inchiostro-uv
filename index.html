@@ -86,6 +86,10 @@
     border-left:2px solid var(--uv-soft);border-radius:0 8px 8px 0;
     padding:12px 14px;margin-top:18px;line-height:1.55}
   .note code{color:var(--uv);font-family:var(--mono)}
+  .filebtn{display:inline-block;font-size:13.5px;font-weight:550;cursor:pointer;border-radius:9px;
+    padding:10px 16px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink);transition:.15s}
+  .filebtn:hover{border-color:var(--uv-soft)}
+  .fname{font-family:var(--mono);font-size:12px;color:var(--muted);align-self:center}
   @media (prefers-reduced-motion:reduce){*{transition:none!important}.out.sweep::after{display:none}}
 </style>
 </head>
@@ -155,6 +159,47 @@
     <div class="status" id="extractStatus"></div>
   </section>
 
+  <section class="panel">
+    <h2>Documenti · Word, Excel, PDF</h2>
+    <p class="lede" style="font-size:13px;margin:-6px 0 14px">Nascondi lo stesso messaggio
+    dentro un file reale. In Word ed Excel viaggia nel testo (resta invisibile); nei PDF viene
+    agganciato in coda al file. Tutto avviene nel browser, il file non viene caricato da nessuna parte.</p>
+    <div class="grid">
+      <div class="row">
+        <label for="docSecret">Messaggio segreto</label>
+        <textarea id="docSecret">RIUNIONE CONFIDENZIALE — venerdì ore 15, sala 2. Progetto ORION-7741</textarea>
+      </div>
+      <div class="row">
+        <label for="docPass">Passphrase di cifratura — opzionale</label>
+        <input id="docPass" type="password" placeholder="vuoto = solo occultamento">
+      </div>
+    </div>
+    <div class="controls">
+      <label class="filebtn" for="docFileIn">Scegli documento (.docx .xlsx .pdf)</label>
+      <input id="docFileIn" type="file" accept=".docx,.xlsx,.pdf" hidden>
+      <span id="docInName" class="fname"></span>
+    </div>
+    <div class="controls" style="margin-top:10px">
+      <button class="primary" id="btnEmbedDoc">Nascondi e scarica</button>
+    </div>
+    <div class="status" id="docStatus"></div>
+
+    <div style="border-top:1px solid var(--line);margin:18px 0 14px"></div>
+
+    <div class="controls">
+      <label class="filebtn" for="docFileOut">Verifica un documento</label>
+      <input id="docFileOut" type="file" accept=".docx,.xlsx,.pdf" hidden>
+      <span id="docOutName" class="fname"></span>
+      <input id="docPassOut" type="password" placeholder="passphrase se cifrato" style="max-width:240px">
+      <button id="btnExtractDoc">Estrai dal documento</button>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <label>Messaggio recuperato dal documento</label>
+      <div class="out" id="docOut"></div>
+    </div>
+    <div class="status" id="docOutStatus"></div>
+  </section>
+
   <div class="note">
     <b>Per il tuo lavoro:</b> i caratteri usati sono <code>U+200B</code> e <code>U+200C</code>.
     Sopravvivono al copia-incolla di testo semplice ma vengono spesso rimossi da sanitizzatori
@@ -164,6 +209,7 @@
   </div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
 const BIT0='\u200B', BIT1='\u200C';
 const ZW_RE=/[\u200B\u200C]/g;
@@ -291,6 +337,99 @@ $('btnScan').onclick=()=>{
   const st=$('extractStatus');
   if(hidden===0){setStatus(st,'nessun carattere invisibile rilevato','');return;}
   setStatus(st,`sospetto: ${hidden} caratteri a larghezza zero (~${Math.max(0,Math.floor(hidden/8)-4)} byte di payload)`,'warn');
+};
+
+// ---- Documenti: Word / Excel / PDF ----
+async function buildZWPayload(secret, pass){
+  let flag=0, body=enc.encode(secret);
+  if(pass){flag=1;body=await encryptBody(enc.encode(secret),pass);}
+  return bitsToZW(bytesToBits(frame(flag,body)));
+}
+const isPdf=bytes=>bytes.length>4 && bytes[0]===0x25&&bytes[1]===0x50&&bytes[2]===0x44&&bytes[3]===0x46;
+function addSuffix(name){const i=name.lastIndexOf('.');return i<0?name+'-stego':name.slice(0,i)+'-stego'+name.slice(i);}
+function download(blob,filename){
+  const url=URL.createObjectURL(blob);const a=document.createElement('a');
+  a.href=url;a.download=filename;document.body.appendChild(a);a.click();
+  setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1500);
+}
+
+async function embedDoc(file, secret, pass){
+  const zw=await buildZWPayload(secret, pass);
+  const name=file.name.toLowerCase();
+  const bytes=new Uint8Array(await file.arrayBuffer());
+
+  if(name.endsWith('.pdf') || isPdf(bytes)){
+    const add=new TextEncoder().encode("\n"+zw+"\n");
+    const out=new Uint8Array(bytes.length+add.length);
+    out.set(bytes,0); out.set(add,bytes.length);
+    return {blob:new Blob([out],{type:'application/pdf'}), filename:addSuffix(file.name), mode:'PDF · in coda al file'};
+  }
+  if(typeof JSZip==='undefined') throw new Error('libreria documenti non caricata (riprova online)');
+  const zip=await JSZip.loadAsync(bytes);
+  const isDocx = name.endsWith('.docx') || !!zip.file('word/document.xml');
+  let target;
+  if(isDocx){ target='word/document.xml'; }
+  else {
+    target = zip.file('xl/sharedStrings.xml') ? 'xl/sharedStrings.xml'
+           : Object.keys(zip.files).find(f=>/^xl\/worksheets\/sheet\d+\.xml$/.test(f));
+  }
+  if(!target || !zip.file(target)) throw new Error('formato non riconosciuto o documento senza testo');
+  let xml=await zip.file(target).async('string');
+  const tag=isDocx?'w:t':'t';
+  const re=new RegExp('(<'+tag+'[^>]*>)([\\s\\S]*?)(</'+tag+'>)');
+  if(!re.test(xml)) throw new Error('nessun campo di testo trovato: aggiungi del testo al documento');
+  xml=xml.replace(re,(full,a,b,c)=>a+b+zw+c);
+  zip.file(target, xml);
+  const blob=await zip.generateAsync({type:'blob'});
+  return {blob, filename:addSuffix(file.name), mode:(isDocx?'Word':'Excel')+' · nel testo'};
+}
+
+async function extractDoc(file, pass){
+  const name=file.name.toLowerCase();
+  const bytes=new Uint8Array(await file.arrayBuffer());
+  let text='';
+  if(name.endsWith('.pdf') || isPdf(bytes)){
+    text=new TextDecoder('utf-8').decode(bytes);
+  } else {
+    if(typeof JSZip==='undefined') throw new Error('libreria documenti non caricata (riprova online)');
+    const zip=await JSZip.loadAsync(bytes);
+    for(const f of Object.keys(zip.files)){
+      if(f.endsWith('.xml')){ try{ text+=await zip.file(f).async('string'); }catch(e){} }
+    }
+  }
+  return await extract(text, pass);   // riusa la decodifica/decifratura esistente
+}
+
+let docInFile=null, docOutFile=null;
+$('docFileIn').onchange=e=>{docInFile=e.target.files[0]; $('docInName').textContent=docInFile?docInFile.name:'';};
+$('docFileOut').onchange=e=>{docOutFile=e.target.files[0]; $('docOutName').textContent=docOutFile?docOutFile.name:'';};
+
+$('btnEmbedDoc').onclick=async()=>{
+  const st=$('docStatus');
+  try{
+    if(!docInFile){setStatus(st,'scegli prima un documento','warn');return;}
+    const secret=$('docSecret').value, pass=$('docPass').value;
+    if(!secret){setStatus(st,'inserisci un messaggio segreto','warn');return;}
+    setStatus(st,'elaborazione…','');
+    const {blob,filename,mode}=await embedDoc(docInFile, secret, pass);
+    download(blob, filename);
+    setStatus(st, `fatto · ${mode}${pass?' · cifrato AES-256':''} · scaricato "${filename}"`, pass?'ok':'warn');
+  }catch(e){setStatus(st,'errore: '+e.message,'err');}
+};
+
+$('btnExtractDoc').onclick=async()=>{
+  const st=$('docOutStatus');
+  try{
+    if(!docOutFile){setStatus(st,'scegli prima un documento','warn');return;}
+    setStatus(st,'analisi…','');
+    const msg=await extractDoc(docOutFile, $('docPassOut').value);
+    $('docOut').textContent=msg;
+    setStatus(st,'messaggio recuperato · integrità verificata','ok');
+  }catch(e){
+    $('docOut').textContent='';
+    setStatus(st, (e.name==='OperationError')?'passphrase errata o dati manomessi (GCM)':'errore: '+e.message,
+      /passphrase|cifrato/.test(e.message||'')?'warn':'err');
+  }
 };
 
 // ---- PWA: install prompt + service worker ----
