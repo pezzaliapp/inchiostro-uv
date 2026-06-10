@@ -1,5 +1,5 @@
 // Inchiostro UV — service worker (offline-first app shell)
-const CACHE = 'inchiostro-uv-v1';
+const CACHE = 'inchiostro-uv-v2';
 const ASSETS = [
   './',
   './index.html',
